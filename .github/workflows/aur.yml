@@ -1,0 +1,123 @@
+name: Update AUR Packages
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # 每天凌晨 2 点检查
+  workflow_dispatch: # 允许手动点按钮触发
+
+jobs:
+  update-and-push:
+    runs-on: ubuntu-latest
+    # 使用 Arch 官方容器，因为我们需要 makepkg, pacman, updpkgsums
+    container: archlinux:base-devel
+
+    steps:
+      - name: Install Tools
+        run: |
+          # 更新源并安装必要的工具
+          pacman -Sy --noconfirm git python python-requests openssh pacman-contrib sudo
+
+          # 创建一个普通用户 'builder'，因为 makepkg 不允许 root 运行
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          path: repo # 将代码检出到 repo 目录
+
+      - name: Setup SSH for AUR
+        run: |
+          mkdir -p /root/.ssh
+          # 【重点】这里获取 Secret 并写入文件
+          echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > /root/.ssh/aur_key
+          chmod 600 /root/.ssh/aur_key
+          
+          # 配置 SSH 使用该密钥
+          echo "Host aur.archlinux.org" >> /root/.ssh/config
+          echo "  IdentityFile /root/.ssh/aur_key" >> /root/.ssh/config
+          echo "  User aur" >> /root/.ssh/config
+          
+          # 添加信任主机
+          ssh-keyscan aur.archlinux.org >> /root/.ssh/known_hosts
+
+          # 为了让 builder 用户也能用 git push，把 key 复制给 builder (或者直接用 root push)
+          cp -r /root/.ssh /home/builder/
+          chown -R builder:builder /home/builder/.ssh
+
+      - name: Configure Git Global
+        run: |
+          git config --global user.name "${{ secrets.AUR_USERNAME }}"
+          git config --global user.email "${{ secrets.AUR_EMAIL }}"
+          # 标记当前目录安全
+          git config --global --add safe.directory '*'
+
+      - name: Check for Updates
+        id: check
+        run: |
+          cd repo
+          python scripts/update.py
+
+      - name: Build and Push (Intel XPU Manager)
+        if: steps.check.outputs.updated == 'true'
+        run: |
+          PKG_NAME="intel-xpumanager-bin"
+          echo "Processing $PKG_NAME..."
+          
+          # 修正权限让 builder 用户可写
+          chown -R builder:builder repo/$PKG_NAME
+          
+          # 切换到 builder 用户执行构建相关操作
+          cd repo/$PKG_NAME
+          
+          # 1. 自动下载文件并计算校验和 (updpkgsums 是 pacman-contrib 里的神器)
+          su builder -c "updpkgsums"
+          
+          # 2. 生成 .SRCINFO
+          su builder -c "makepkg --printsrcinfo > .SRCINFO"
+          
+          # 3. 推送到 AUR
+          # 克隆 AUR 仓库到临时目录
+          cd ..
+          su builder -c "git clone ssh://aur@aur.archlinux.org/${PKG_NAME}.git aur-${PKG_NAME}"
+          
+          # 复制新文件覆盖
+          cp $PKG_NAME/PKGBUILD aur-${PKG_NAME}/
+          cp $PKG_NAME/.SRCINFO aur-${PKG_NAME}/
+          
+          # 提交
+          cd aur-${PKG_NAME}
+          su builder -c "git add PKGBUILD .SRCINFO"
+          su builder -c "git commit -m 'Update to ${{ steps.check.outputs.version }}'" || echo "Nothing to commit"
+          su builder -c "git push"
+
+      - name: Build and Push (Intel XPU SMI)
+        if: steps.check.outputs.updated == 'true'
+        run: |
+          PKG_NAME="intel-xpu-smi-bin"
+          echo "Processing $PKG_NAME..."
+          
+          chown -R builder:builder repo/$PKG_NAME
+          cd repo/$PKG_NAME
+          
+          su builder -c "updpkgsums"
+          su builder -c "makepkg --printsrcinfo > .SRCINFO"
+          
+          cd ..
+          su builder -c "git clone ssh://aur@aur.archlinux.org/${PKG_NAME}.git aur-${PKG_NAME}"
+          
+          cp $PKG_NAME/PKGBUILD aur-${PKG_NAME}/
+          cp $PKG_NAME/.SRCINFO aur-${PKG_NAME}/
+          
+          cd aur-${PKG_NAME}
+          su builder -c "git add PKGBUILD .SRCINFO"
+          su builder -c "git commit -m 'Update to ${{ steps.check.outputs.version }}'" || echo "Nothing to commit"
+          su builder -c "git push"
+      
+      - name: Commit changes back to GitHub repo
+        if: steps.check.outputs.updated == 'true'
+        run: |
+          cd repo
+          git add .
+          git commit -m "Auto update to ${{ steps.check.outputs.version }}"
+          git push

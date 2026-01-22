@@ -1,3 +1,10 @@
+pkg/
+src/
+*.tar.gz
+*.tar.zst
+*.tar.xz
+*.deb
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
