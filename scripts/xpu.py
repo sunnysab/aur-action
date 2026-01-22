@@ -1,4 +1,3 @@
-# scripts/xpu.py
 import requests
 import re
 import os
@@ -10,35 +9,55 @@ REPO_API = "https://api.github.com/repos/intel/xpumanager/releases/latest"
 
 def get_latest_info():
     print("Fetching latest release info...")
-    resp = requests.get(REPO_API)
-    if resp.status_code != 200:
-        print(f"Failed to fetch release: {resp.status_code}")
+    try:
+        resp = requests.get(REPO_API)
+        resp.raise_for_status() # 检查 HTTP 错误
+        data = resp.json()
+    except Exception as e:
+        print(f"Network error: {e}")
         sys.exit(1)
     
-    data = resp.json()
-    tag_name = data['tag_name'].lstrip('v') # 例如 1.3.5
-    
-    # 寻找符合 ubuntu 24.04 的 amd64 包，以此提取 build 版本
+    # 寻找符合 ubuntu 24.04 的 amd64 包
     # 文件名示例: xpumanager_1.3.5_20251216.170635.605ff78d.u24.04_amd64.deb
-    target_asset = None
+    target_asset_name = None
+    download_url = None
+    
     for asset in data['assets']:
         if "xpumanager" in asset['name'] and "u24.04_amd64.deb" in asset['name']:
-            target_asset = asset['name']
+            target_asset_name = asset['name']
+            download_url = asset['browser_download_url']
             break
             
-    if not target_asset:
-        print("Could not find matching u24.04 asset.")
+    if not target_asset_name:
+        print("Could not find matching u24.04 asset in the latest release.")
+        print("Available assets: " + ", ".join([a['name'] for a in data['assets']]))
         sys.exit(1)
 
-    # 正则提取 buildver (中间那长串)
-    # 匹配: _1.3.5_(20251216.170635.605ff78d.u24.04)_amd64.deb
-    match = re.search(fr"_{re.escape(tag_name)}_(.+?)_amd64\.deb", target_asset)
-    if not match:
-        print(f"Could not parse build version from {target_asset}")
-        sys.exit(1)
+    print(f"Found asset: {target_asset_name}")
+
+    # 使用 split 分割字符串，而不是复杂的正则
+    # 预期结构: [名称]_[版本]_[构建号]_[架构后缀]
+    # 示例: xpumanager_1.3.5_20251216.170635.605ff78d.u24.04_amd64.deb
+    try:
+        parts = target_asset_name.split('_')
+        # parts[0] -> xpumanager
+        # parts[1] -> 1.3.5 (版本号)
+        # parts[2] -> 20251216.170635.605ff78d.u24.04 (构建号)
+        # parts[3] -> amd64.deb
         
-    build_ver = match.group(1)
-    return tag_name, build_ver
+        if len(parts) < 4:
+            raise ValueError(f"Filename format unexpected: {parts}")
+
+        version = parts[1]
+        build_ver = parts[2]
+        
+        print(f"Parsed -> Version: {version}, Build: {build_ver}")
+        return version, build_ver
+
+    except Exception as e:
+        print(f"Could not parse build version from {target_asset_name}")
+        print(f"Error details: {e}")
+        sys.exit(1)
 
 def update_pkgbuild(pkg_path, new_ver, new_build_ver):
     pkgbuild_file = os.path.join(pkg_path, "PKGBUILD")
@@ -51,7 +70,6 @@ def update_pkgbuild(pkg_path, new_ver, new_build_ver):
         content = f.read()
 
     # 1. 获取本地 PKGBUILD 中的版本
-    # 使用正则精确提取，防止提取到注释里的数字
     ver_match = re.search(r'^pkgver=([^\s]+)', content, re.MULTILINE)
     build_match = re.search(r'^_buildver=([^\s]+)', content, re.MULTILINE)
 
@@ -62,18 +80,18 @@ def update_pkgbuild(pkg_path, new_ver, new_build_ver):
     current_ver = ver_match.group(1)
     current_build = build_match.group(1)
 
-    # 2. 完全相等则直接退出
-    # 只有当 主版本号不同 OR 构建版本号不同 时，才继续
+    # 2. 对比版本
     if current_ver == new_ver and current_build == new_build_ver:
         print(f"[{pkg_path}] Already up to date ({current_ver}-{current_build}). Skipping.")
         return False
 
-    print(f"[{pkg_path}] Update detected: {current_ver} -> {new_ver}")
+    print(f"[{pkg_path}] Update detected: {current_ver} -> {new_ver} ({new_build_ver})")
 
     # 3. 执行修改
     content = re.sub(r'^pkgver=.+$', f'pkgver={new_ver}', content, flags=re.MULTILINE)
     content = re.sub(r'^_buildver=.+$', f'_buildver={new_build_ver}', content, flags=re.MULTILINE)
     content = re.sub(r'^pkgrel=.+$', 'pkgrel=1', content, flags=re.MULTILINE)
+    # 重置校验和为 SKIP
     content = re.sub(r"^sha256sums=\('.*'\)", "sha256sums=('SKIP')", content, flags=re.MULTILINE)
 
     with open(pkgbuild_file, 'w') as f:
@@ -83,18 +101,21 @@ def update_pkgbuild(pkg_path, new_ver, new_build_ver):
 
 if __name__ == "__main__":
     ver, build_ver = get_latest_info()
-    print(f"Latest Version: {ver}, Build: {build_ver}")
-
+    
     any_updated = False
     for pkg in PACKAGES:
         if os.path.exists(pkg):
             if update_pkgbuild(pkg, ver, build_ver):
                 any_updated = True
     
-    # 利用 GITHUB_OUTPUT 传递状态给后续步骤
-    if any_updated:
+    # 输出 Action 变量
+    if 'GITHUB_OUTPUT' in os.environ:
         with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-            f.write("updated=true\n")
-            f.write(f"version={ver}\n")
+            if any_updated:
+                f.write("updated=true\n")
+                f.write(f"version={ver}\n")
+            else:
+                f.write("updated=false\n")
     else:
-        print("All packages are up-to-date.")
+        # 本地测试用
+        print(f"Output: updated={str(any_updated).lower()}, version={ver}")
