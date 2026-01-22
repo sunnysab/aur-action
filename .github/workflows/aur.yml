@@ -57,7 +57,7 @@ jobs:
         run: |
           cd repo
           # 运行更新脚本，如果发现新版本，脚本应输出 updated=true 到 GITHUB_OUTPUT
-          python scripts/update.py
+          python scripts/xpu.py
 
       - name: Process AUR Packages
         if: steps.check.outputs.updated == 'true'
