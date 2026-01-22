@@ -42,29 +42,43 @@ def get_latest_info():
 
 def update_pkgbuild(pkg_path, new_ver, new_build_ver):
     pkgbuild_file = os.path.join(pkg_path, "PKGBUILD")
+    
+    if not os.path.exists(pkgbuild_file):
+        print(f"Error: {pkgbuild_file} not found.")
+        return False
+
     with open(pkgbuild_file, 'r') as f:
         content = f.read()
 
-    # 检查版本是否需要更新
-    current_ver = re.search(r'^pkgver=(.+)$', content, re.MULTILINE).group(1)
-    current_build = re.search(r'^_buildver=(.+)$', content, re.MULTILINE).group(1)
+    # 1. 获取本地 PKGBUILD 中的版本
+    # 使用正则精确提取，防止提取到注释里的数字
+    ver_match = re.search(r'^pkgver=([^\s]+)', content, re.MULTILINE)
+    build_match = re.search(r'^_buildver=([^\s]+)', content, re.MULTILINE)
 
-    if current_ver == new_ver and current_build == new_build_ver:
+    if not ver_match or not build_match:
+        print(f"Error: Could not parse current version in {pkgbuild_file}")
         return False
 
-    print(f"Updating {pkg_path}: {current_ver} -> {new_ver} ({new_build_ver})")
-    
-    # 替换 pkgver
+    current_ver = ver_match.group(1)
+    current_build = build_match.group(1)
+
+    # 2. 完全相等则直接退出
+    # 只有当 主版本号不同 OR 构建版本号不同 时，才继续
+    if current_ver == new_ver and current_build == new_build_ver:
+        print(f"[{pkg_path}] Already up to date ({current_ver}-{current_build}). Skipping.")
+        return False
+
+    print(f"[{pkg_path}] Update detected: {current_ver} -> {new_ver}")
+
+    # 3. 执行修改
     content = re.sub(r'^pkgver=.+$', f'pkgver={new_ver}', content, flags=re.MULTILINE)
-    # 替换 _buildver
     content = re.sub(r'^_buildver=.+$', f'_buildver={new_build_ver}', content, flags=re.MULTILINE)
-    # 重置 pkgrel
     content = re.sub(r'^pkgrel=.+$', 'pkgrel=1', content, flags=re.MULTILINE)
-    # 将校验和重置为 SKIP (后续由 updpkgsums 处理)
     content = re.sub(r"^sha256sums=\('.*'\)", "sha256sums=('SKIP')", content, flags=re.MULTILINE)
 
     with open(pkgbuild_file, 'w') as f:
         f.write(content)
+    
     return True
 
 if __name__ == "__main__":

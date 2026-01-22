@@ -2,122 +2,137 @@ name: Update AUR Packages
 
 on:
   schedule:
-    - cron: '0 2 * * *' # 每天凌晨 2 点检查
-  workflow_dispatch: # 允许手动点按钮触发
+    - cron: '0 2 * * *' # UTC时间 02:00 (北京时间 10:00)
+  workflow_dispatch:    # 允许手动触发
 
 jobs:
   update-and-push:
     runs-on: ubuntu-latest
-    # 使用 Arch 官方容器，因为我们需要 makepkg, pacman, updpkgsums
+    # 使用 Arch Linux 官方开发容器，预置了 makepkg 等必要环境
     container: archlinux:base-devel
 
     steps:
-      - name: Install Tools
+      - name: System Preparation
         run: |
-          # 更新源并安装必要的工具
+          # 1. 初始化 Pacman 密钥环并更新系统
+          pacman-key --init
+          pacman-key --populate archlinux
           pacman -Sy --noconfirm git python python-requests openssh pacman-contrib sudo
 
-          # 创建一个普通用户 'builder'，因为 makepkg 不允许 root 运行
+          # 2. 创建构建用户 'builder' (makepkg 禁止以 root 运行)
           useradd -m builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
 
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          path: repo # 将代码检出到 repo 目录
-
-      - name: Setup SSH for AUR
-        run: |
-          mkdir -p /root/.ssh
-          # 【重点】这里获取 Secret 并写入文件
-          echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > /root/.ssh/aur_key
-          chmod 600 /root/.ssh/aur_key
-          
-          # 配置 SSH 使用该密钥
-          echo "Host aur.archlinux.org" >> /root/.ssh/config
-          echo "  IdentityFile /root/.ssh/aur_key" >> /root/.ssh/config
-          echo "  User aur" >> /root/.ssh/config
-          
-          # 添加信任主机
-          ssh-keyscan aur.archlinux.org >> /root/.ssh/known_hosts
-
-          # 为了让 builder 用户也能用 git push，把 key 复制给 builder (或者直接用 root push)
-          cp -r /root/.ssh /home/builder/
-          chown -R builder:builder /home/builder/.ssh
-
-      - name: Configure Git Global
-        run: |
-          git config --global user.name "${{ secrets.AUR_USERNAME }}"
-          git config --global user.email "${{ secrets.AUR_EMAIL }}"
-          # 标记当前目录安全
+          # 3. 解决 git 在容器中的 safe.directory 问题
           git config --global --add safe.directory '*'
 
-      - name: Check for Updates
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          path: repo
+          fetch-depth: 0 # 获取完整历史以便提交
+
+      - name: Configure SSH for Builder
+        run: |
+          # 直接为 builder 用户配置 SSH，用于连接 AUR
+          mkdir -p /home/builder/.ssh
+          
+          # 写入私钥
+          echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > /home/builder/.ssh/id_ed25519
+          chmod 600 /home/builder/.ssh/id_ed25519
+          
+          # 配置 SSH 客户端
+          cat <<EOF > /home/builder/.ssh/config
+          Host aur.archlinux.org
+            IdentityFile /home/builder/.ssh/id_ed25519
+            User aur
+            StrictHostKeyChecking no
+          EOF
+          
+          # 修正权限
+          chown -R builder:builder /home/builder/.ssh
+
+      - name: Check for Updates (Python)
         id: check
         run: |
           cd repo
+          # 运行更新脚本，如果发现新版本，脚本应输出 updated=true 到 GITHUB_OUTPUT
           python scripts/update.py
 
-      - name: Build and Push (Intel XPU Manager)
+      - name: Process AUR Packages
         if: steps.check.outputs.updated == 'true'
         run: |
-          PKG_NAME="intel-xpumanager-bin"
-          echo "Processing $PKG_NAME..."
+          # 定义需要处理的包列表
+          PACKAGES=("intel-xpumanager-bin" "intel-xpu-smi-bin")
           
-          # 修正权限让 builder 用户可写
-          chown -R builder:builder repo/$PKG_NAME
-          
-          # 切换到 builder 用户执行构建相关操作
-          cd repo/$PKG_NAME
-          
-          # 1. 自动下载文件并计算校验和 (updpkgsums 是 pacman-contrib 里的神器)
-          su builder -c "updpkgsums"
-          
-          # 2. 生成 .SRCINFO
-          su builder -c "makepkg --printsrcinfo > .SRCINFO"
-          
-          # 3. 推送到 AUR
-          # 克隆 AUR 仓库到临时目录
-          cd ..
-          su builder -c "git clone ssh://aur@aur.archlinux.org/${PKG_NAME}.git aur-${PKG_NAME}"
-          
-          # 复制新文件覆盖
-          cp $PKG_NAME/PKGBUILD aur-${PKG_NAME}/
-          cp $PKG_NAME/.SRCINFO aur-${PKG_NAME}/
-          
-          # 提交
-          cd aur-${PKG_NAME}
-          su builder -c "git add PKGBUILD .SRCINFO"
-          su builder -c "git commit -m 'Update to ${{ steps.check.outputs.version }}'" || echo "Nothing to commit"
-          su builder -c "git push"
+          # 配置 builder 用户的 git 信息 (用于 AUR 提交)
+          su builder -c "git config --global user.name '${{ secrets.AUR_USERNAME }}'"
+          su builder -c "git config --global user.email '${{ secrets.AUR_EMAIL }}'"
 
-      - name: Build and Push (Intel XPU SMI)
-        if: steps.check.outputs.updated == 'true'
-        run: |
-          PKG_NAME="intel-xpu-smi-bin"
-          echo "Processing $PKG_NAME..."
-          
-          chown -R builder:builder repo/$PKG_NAME
-          cd repo/$PKG_NAME
-          
-          su builder -c "updpkgsums"
-          su builder -c "makepkg --printsrcinfo > .SRCINFO"
-          
-          cd ..
-          su builder -c "git clone ssh://aur@aur.archlinux.org/${PKG_NAME}.git aur-${PKG_NAME}"
-          
-          cp $PKG_NAME/PKGBUILD aur-${PKG_NAME}/
-          cp $PKG_NAME/.SRCINFO aur-${PKG_NAME}/
-          
-          cd aur-${PKG_NAME}
-          su builder -c "git add PKGBUILD .SRCINFO"
-          su builder -c "git commit -m 'Update to ${{ steps.check.outputs.version }}'" || echo "Nothing to commit"
-          su builder -c "git push"
-      
-      - name: Commit changes back to GitHub repo
+          # 修正 repo 目录权限，让 builder 可以写入 PKGBUILD
+          chown -R builder:builder repo
+
+          for PKG_NAME in "${PACKAGES[@]}"; do
+            echo "::group::Processing $PKG_NAME"
+            
+            PKG_DIR="repo/$PKG_NAME"
+            AUR_DIR="aur-$PKG_NAME"
+            
+            # --- 1. 生成新的校验和与元数据 ---
+            echo "Generating checksums and .SRCINFO..."
+            cd "$PKG_DIR"
+            
+            # updpkgsums: 自动下载 source 并更新 sha256sums
+            su builder -c "updpkgsums"
+            # 生成 AUR 必需的 .SRCINFO
+            su builder -c "makepkg --printsrcinfo > .SRCINFO"
+            
+            cd ../..
+
+            # --- 2. 克隆 AUR 仓库 ---
+            echo "Cloning AUR repository..."
+            # 确保目录不存在
+            rm -rf "$AUR_DIR"
+            su builder -c "git clone ssh://aur@aur.archlinux.org/${PKG_NAME}.git $AUR_DIR"
+
+            # --- 3. 同步文件 ---
+            echo "Syncing files..."
+            cp "$PKG_DIR/PKGBUILD" "$AUR_DIR/"
+            cp "$PKG_DIR/.SRCINFO" "$AUR_DIR/"
+
+            # --- 4. 提交到 AUR ---
+            cd "$AUR_DIR"
+            
+            # 添加文件
+            su builder -c "git add PKGBUILD .SRCINFO"
+            
+            # 检查是否有实质性变更
+            if su builder -c "git diff --cached --quiet"; then
+              echo "No changes detected for $PKG_NAME. Skipping push."
+            else
+              echo "Changes detected. Committing and pushing..."
+              su builder -c "git commit -m 'Update to ${{ steps.check.outputs.version }}'"
+              su builder -c "git push origin master"
+            fi
+            
+            cd ..
+            echo "::endgroup::"
+          done
+
+      - name: Sync changes back to GitHub
         if: steps.check.outputs.updated == 'true'
         run: |
           cd repo
+          # 配置当前运行环境的 git (root)
+          git config --global user.name "${{ secrets.AUR_USERNAME }}"
+          git config --global user.email "${{ secrets.AUR_EMAIL }}"
+          
           git add .
-          git commit -m "Auto update to ${{ steps.check.outputs.version }}"
-          git push
+          
+          # 同样进行空提交检查
+          if git diff --cached --quiet; then
+            echo "No changes to sync back to GitHub."
+          else
+            git commit -m "Auto update to ${{ steps.check.outputs.version }}"
+            git push
+          fi
