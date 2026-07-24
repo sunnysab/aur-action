@@ -1,121 +1,120 @@
-import requests
-import re
+import json
 import os
+import re
 import sys
+from pathlib import Path
+from urllib.request import urlopen
 
-# 目标仓库配置
-PACKAGES = ["intel-xpumanager-bin", "intel-xpu-smi-bin"]
-REPO_API = "https://api.github.com/repos/intel/xpumanager/releases/latest"
+
+REPO_API = "https://api.github.com/repos/intel/xpumanager/releases?per_page=20"
+ASSET_PATTERNS = {
+    "intel-xpumanager-bin": re.compile(
+        r"^xpumanager_(?P<version>\d+(?:\.\d+)+)_(?P<build>[^_]+)_amd64\.deb$"
+    ),
+    "intel-xpu-smi-bin": re.compile(
+        r"^xpu-smi_(?P<version>\d+(?:\.\d+)+)-(?P<build>[^_]+)_amd64\.deb$"
+    ),
+}
+
+
+def parse_asset(name):
+    for package, pattern in ASSET_PATTERNS.items():
+        if match := pattern.fullmatch(name):
+            return package, *match.group("version", "build")
+    return None
+
 
 def get_latest_info():
-    print("Fetching latest release info...")
-    try:
-        resp = requests.get(REPO_API)
-        resp.raise_for_status() # 检查 HTTP 错误
-        data = resp.json()
-    except Exception as e:
-        print(f"Network error: {e}")
-        sys.exit(1)
-    
-    # 寻找符合 ubuntu 24.04 的 amd64 包
-    # 文件名示例: xpumanager_1.3.5_20251216.170635.605ff78d.u24.04_amd64.deb
-    target_asset_name = None
-    download_url = None
-    
-    for asset in data['assets']:
-        if "xpumanager" in asset['name'] and "u24.04_amd64.deb" in asset['name']:
-            target_asset_name = asset['name']
-            download_url = asset['browser_download_url']
+    print("Fetching release info...")
+    with urlopen(REPO_API, timeout=30) as response:
+        releases = json.load(response)
+
+    found = {}
+    for release in releases:
+        for asset in release.get("assets", []):
+            parsed = parse_asset(asset["name"])
+            if parsed and parsed[2].endswith("24.04"):
+                found.setdefault(parsed[0], parsed[1:])
+        if len(found) == len(ASSET_PATTERNS):
             break
-            
-    if not target_asset_name:
-        print("Could not find matching u24.04 asset in the latest release.")
-        print("Available assets: " + ", ".join([a['name'] for a in data['assets']]))
-        sys.exit(1)
 
-    print(f"Found asset: {target_asset_name}")
+    missing = ASSET_PATTERNS.keys() - found.keys()
+    if missing:
+        raise RuntimeError(f"No Ubuntu 24.04 asset found for: {', '.join(missing)}")
+    return found
 
-    # 使用 split 分割字符串，而不是复杂的正则
-    # 预期结构: [名称]_[版本]_[构建号]_[架构后缀]
-    # 示例: xpumanager_1.3.5_20251216.170635.605ff78d.u24.04_amd64.deb
-    try:
-        parts = target_asset_name.split('_')
-        # parts[0] -> xpumanager
-        # parts[1] -> 1.3.5 (版本号)
-        # parts[2] -> 20251216.170635.605ff78d.u24.04 (构建号)
-        # parts[3] -> amd64.deb
-        
-        if len(parts) < 4:
-            raise ValueError(f"Filename format unexpected: {parts}")
 
-        version = parts[1]
-        build_ver = parts[2]
-        
-        print(f"Parsed -> Version: {version}, Build: {build_ver}")
-        return version, build_ver
+def update_pkgbuild(pkg_path, version, build):
+    pkgbuild = Path(pkg_path) / "PKGBUILD"
+    content = pkgbuild.read_text()
 
-    except Exception as e:
-        print(f"Could not parse build version from {target_asset_name}")
-        print(f"Error details: {e}")
-        sys.exit(1)
-
-def update_pkgbuild(pkg_path, new_ver, new_build_ver):
-    pkgbuild_file = os.path.join(pkg_path, "PKGBUILD")
-    
-    if not os.path.exists(pkgbuild_file):
-        print(f"Error: {pkgbuild_file} not found.")
+    current_version = re.search(r"^pkgver=(\S+)", content, re.MULTILINE)
+    current_build = re.search(r"^_buildver=(\S+)", content, re.MULTILINE)
+    if not current_version or not current_build:
+        raise RuntimeError(f"Could not parse current version in {pkgbuild}")
+    if (current_version.group(1), current_build.group(1)) == (version, build):
+        print(f"[{pkg_path}] Already up to date ({version}-{build}).")
         return False
 
-    with open(pkgbuild_file, 'r') as f:
-        content = f.read()
-
-    # 1. 获取本地 PKGBUILD 中的版本
-    ver_match = re.search(r'^pkgver=([^\s]+)', content, re.MULTILINE)
-    build_match = re.search(r'^_buildver=([^\s]+)', content, re.MULTILINE)
-
-    if not ver_match or not build_match:
-        print(f"Error: Could not parse current version in {pkgbuild_file}")
-        return False
-
-    current_ver = ver_match.group(1)
-    current_build = build_match.group(1)
-
-    # 2. 对比版本
-    if current_ver == new_ver and current_build == new_build_ver:
-        print(f"[{pkg_path}] Already up to date ({current_ver}-{current_build}). Skipping.")
-        return False
-
-    print(f"[{pkg_path}] Update detected: {current_ver} -> {new_ver} ({new_build_ver})")
-
-    # 3. 执行修改
-    content = re.sub(r'^pkgver=.+$', f'pkgver={new_ver}', content, flags=re.MULTILINE)
-    content = re.sub(r'^_buildver=.+$', f'_buildver={new_build_ver}', content, flags=re.MULTILINE)
-    content = re.sub(r'^pkgrel=.+$', 'pkgrel=1', content, flags=re.MULTILINE)
-    # 重置校验和为 SKIP
-    content = re.sub(r"^sha256sums=\('.*'\)", "sha256sums=('SKIP')", content, flags=re.MULTILINE)
-
-    with open(pkgbuild_file, 'w') as f:
-        f.write(content)
-    
+    print(f"[{pkg_path}] Updating to {version}-{build}")
+    content = re.sub(r"^pkgver=.+$", f"pkgver={version}", content, flags=re.MULTILINE)
+    content = re.sub(r"^_buildver=.+$", f"_buildver={build}", content, flags=re.MULTILINE)
+    content = re.sub(r"^pkgrel=.+$", "pkgrel=1", content, flags=re.MULTILINE)
+    if Path(pkg_path).name == "intel-xpu-smi-bin":
+        content = re.sub(
+            r"xpu-smi_\$\{pkgver\}[_-]\$\{_buildver\}_amd64\.deb",
+            "xpu-smi_${pkgver}-${_buildver}_amd64.deb",
+            content,
+        )
+        content = content.replace("data.tar.gz", "data.tar.zst")
+        content = re.sub(
+            r"^provides=.+$", "provides=('intel-xpu-smi')", content, flags=re.MULTILINE
+        )
+        content = re.sub(
+            r"^depends=\(.*?^\)",
+            "depends=(\n"
+            "    'intel-compute-runtime'\n"
+            "    'level-zero-loader'\n"
+            "    'igsc>=1.3.1'\n"
+            "    'hwloc'\n"
+            "    'libpciaccess'\n"
+            ")",
+            content,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+    content = re.sub(
+        r"^sha256sums=.+$", "sha256sums=('SKIP')", content, flags=re.MULTILINE
+    )
+    pkgbuild.write_text(content)
     return True
 
-if __name__ == "__main__":
-    ver, build_ver = get_latest_info()
-    
-    any_updated = False
-    for pkg in PACKAGES:
-        if os.path.exists(pkg):
-            if update_pkgbuild(pkg, ver, build_ver):
-                any_updated = True
-    
-    # 输出 Action 变量
-    if 'GITHUB_OUTPUT' in os.environ:
-        with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-            if any_updated:
-                f.write("updated=true\n")
-                f.write(f"version={ver}\n")
-            else:
-                f.write("updated=false\n")
+
+def write_output(updated_packages):
+    if output := os.environ.get("GITHUB_OUTPUT"):
+        with open(output, "a") as stream:
+            stream.write(f"updated={str(bool(updated_packages)).lower()}\n")
+            stream.write(f"packages={' '.join(updated_packages)}\n")
     else:
-        # 本地测试用
-        print(f"Output: updated={str(any_updated).lower()}, version={ver}")
+        print(f"Updated packages: {' '.join(updated_packages) or 'none'}")
+
+
+def main():
+    try:
+        releases = get_latest_info()
+        updated = []
+        for package, (version, build) in releases.items():
+            if package == "intel-xpu-smi-bin" and not Path(
+                "/usr/lib/libigsc.so.1"
+            ).exists():
+                print("Skipping XPU-SMI 2.x: Arch does not provide libigsc.so.1 yet.")
+                continue
+            if update_pkgbuild(package, version, build):
+                updated.append(package)
+        write_output(updated)
+    except Exception as error:
+        print(f"Error: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
+
+
+if __name__ == "__main__":
+    main()
