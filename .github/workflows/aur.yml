@@ -17,7 +17,7 @@ jobs:
           # 1. 初始化 Pacman 密钥环并更新系统
           pacman-key --init
           pacman-key --populate archlinux
-          pacman -Sy --noconfirm git python python-requests openssh pacman-contrib sudo
+          pacman -Sy --noconfirm git python openssh pacman-contrib sudo igsc
 
           # 2. 创建构建用户 'builder' (makepkg 禁止以 root 运行)
           useradd -m builder
@@ -55,16 +55,15 @@ jobs:
       - name: Check for Updates (Python)
         id: check
         run: |
+          chown -R builder:builder repo
+          su builder -c "git clone ssh://aur@aur.archlinux.org/intel-xpumanager-bin.git repo/intel-xpumanager-bin"
+          su builder -c "git clone ssh://aur@aur.archlinux.org/intel-xpu-smi-bin.git repo/intel-xpu-smi-bin"
           cd repo
-          # 运行更新脚本，如果发现新版本，脚本应输出 updated=true 到 GITHUB_OUTPUT
           python scripts/xpu.py
 
       - name: Process AUR Packages
         if: steps.check.outputs.updated == 'true'
         run: |
-          # 定义需要处理的包列表
-          PACKAGES=("intel-xpumanager-bin" "intel-xpu-smi-bin")
-          
           # 配置 builder 用户的 git 信息 (用于 AUR 提交)
           su builder -c "git config --global user.name '${{ secrets.AUR_USERNAME }}'"
           su builder -c "git config --global user.email '${{ secrets.AUR_EMAIL }}'"
@@ -72,37 +71,20 @@ jobs:
           # 修正 repo 目录权限，让 builder 可以写入 PKGBUILD
           chown -R builder:builder repo
 
-          for PKG_NAME in "${PACKAGES[@]}"; do
+          for PKG_NAME in ${{ steps.check.outputs.packages }}; do
+            (
             echo "::group::Processing $PKG_NAME"
-            
-            PKG_DIR="repo/$PKG_NAME"
-            AUR_DIR="aur-$PKG_NAME"
-            
+
             # --- 1. 生成新的校验和与元数据 ---
             echo "Generating checksums and .SRCINFO..."
-            cd "$PKG_DIR"
+            cd "repo/$PKG_NAME"
             
             # updpkgsums: 自动下载 source 并更新 sha256sums
             su builder -c "updpkgsums"
             # 生成 AUR 必需的 .SRCINFO
             su builder -c "makepkg --printsrcinfo > .SRCINFO"
             
-            cd ../..
-
-            # --- 2. 克隆 AUR 仓库 ---
-            echo "Cloning AUR repository..."
-            # 确保目录不存在
-            rm -rf "$AUR_DIR"
-            su builder -c "git clone ssh://aur@aur.archlinux.org/${PKG_NAME}.git $AUR_DIR"
-
-            # --- 3. 同步文件 ---
-            echo "Syncing files..."
-            cp "$PKG_DIR/PKGBUILD" "$AUR_DIR/"
-            cp "$PKG_DIR/.SRCINFO" "$AUR_DIR/"
-
-            # --- 4. 提交到 AUR ---
-            cd "$AUR_DIR"
-            
+            # --- 2. 提交到 AUR ---
             # 添加文件
             su builder -c "git add PKGBUILD .SRCINFO"
             
@@ -111,28 +93,11 @@ jobs:
               echo "No changes detected for $PKG_NAME. Skipping push."
             else
               echo "Changes detected. Committing and pushing..."
-              su builder -c "git commit -m 'Update to ${{ steps.check.outputs.version }}'"
+              PKGVER=$(sed -n 's/^pkgver=//p' PKGBUILD)
+              su builder -c "git commit -m 'Update to $PKGVER'"
               su builder -c "git push origin master"
             fi
             
-            cd ..
             echo "::endgroup::"
+            )
           done
-
-      - name: Sync changes back to GitHub
-        if: steps.check.outputs.updated == 'true'
-        run: |
-          cd repo
-          # 配置当前运行环境的 git (root)
-          git config --global user.name "${{ secrets.AUR_USERNAME }}"
-          git config --global user.email "${{ secrets.AUR_EMAIL }}"
-          
-          git add .
-          
-          # 同样进行空提交检查
-          if git diff --cached --quiet; then
-            echo "No changes to sync back to GitHub."
-          else
-            git commit -m "Auto update to ${{ steps.check.outputs.version }}"
-            git push
-          fi
