@@ -15,7 +15,7 @@ jobs:
           # 1. 初始化 Pacman 密钥环并更新系统
           pacman-key --init
           pacman-key --populate archlinux
-          pacman -Sy --noconfirm git python openssh pacman-contrib sudo igsc
+          pacman -Sy --noconfirm git python openssh pacman-contrib sudo
 
           # 2. 创建构建用户 'builder' (makepkg 禁止以 root 运行)
           useradd -m builder
@@ -56,8 +56,9 @@ jobs:
           chown -R builder:builder repo
           su builder -c "git clone ssh://aur@aur.archlinux.org/intel-xpumanager-bin.git repo/intel-xpumanager-bin"
           su builder -c "git clone ssh://aur@aur.archlinux.org/intel-xpu-smi-bin.git repo/intel-xpu-smi-bin"
+          su builder -c "git clone ssh://aur@aur.archlinux.org/intel-igsc.git repo/intel-igsc"
           cd repo
-          python scripts/xpu.py
+          python scripts/update.py
 
       - name: Process AUR Packages
         if: steps.check.outputs.updated == 'true'
