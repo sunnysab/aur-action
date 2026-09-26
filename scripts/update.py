@@ -122,13 +122,15 @@ def update_deb_pkgbuild(pkg_path, version, build):
         content = re.sub(
             r"^provides=.+$", "provides=('intel-xpu-smi')", content, flags=re.MULTILINE
         )
-        # 2.x links against libigsc.so.1, which only igsc >= 1.3.1 provides.
+        # 2.x links against libigsc.so.1, which only igsc >= 1.3.1 provides,
+        # and against libmetee directly (relinked in package()).
         content = re.sub(
             r"^depends=\(.*?^\)",
             "depends=(\n"
             "    'intel-compute-runtime'\n"
             "    'level-zero-loader'\n"
             "    'igsc>=1.3.1'\n"
+            "    'intel-metee'\n"
             "    'hwloc'\n"
             "    'libpciaccess'\n"
             ")",

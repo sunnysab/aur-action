@@ -20,6 +20,8 @@
 - XPU Manager 2.x 不再发布 daemon 包，因此 `intel-xpumanager-bin` 跟踪最后一个 daemon 版本 1.3.7；2.x 仅自动更新 `intel-xpu-smi-bin`。
 - XPU-SMI 2.x 需要 `libigsc.so.1`，由本仓库维护的 `intel-igsc` 提供（Arch 官方 `igsc` 只有 `libigsc.so.0`）。
 
+> XPU-SMI 2.x 还直接链接 `libmetee`，而上游的 Ubuntu 构建针对的是 Ubuntu 自带的 SONAME（如 `libmetee.so.6.2.5.0`）。PKGBUILD 在 `package()` 中用 patchelf 改写为构建机上实际的 SONAME，因此 `intel-metee` 升级后需要重新构建本包。
+
 ## Intel-IGSC
 - `intel-igsc`：Intel Graphics System Controller 固件更新库，提供 `igsc` CLI 与 `libigsc.so.1`。
 

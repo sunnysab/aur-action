@@ -45,6 +45,7 @@ class UpdateTest(unittest.TestCase):
             self.assertIn("data.tar.zst", content)
             self.assertIn("provides=('intel-xpu-smi')", content)
             self.assertIn("'igsc>=1.3.1'", content)
+            self.assertIn("'intel-metee'", content)
             self.assertIn("'hwloc'", content)
             self.assertFalse(update_deb_pkgbuild(package, "2.0.1", "1.24.04"))
 
