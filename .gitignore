@@ -1,5 +1,8 @@
 pkg/
 src/
+
+# AUR checkouts (the workflow clones them here, local runs can too)
+repo/
 *.tar.gz
 *.tar.zst
 *.tar.xz

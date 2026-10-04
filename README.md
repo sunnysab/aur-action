@@ -37,3 +37,21 @@ Arch 官方 `extra/igsc` 停留在上游 0.9.5，只提供 `libigsc.so.0`，且�
 - PKGBUILD 更新：替换 `pkgver`，重置 `pkgrel=1`，并将 `sha256sums` 设为 `SKIP`
 
 > `libmetee` 的 SONAME 携带完整版本号（例如 `libmetee.so.6.2.6.0`），上游每发一个小版本都会让已构建的 `libigsc.so.1` 找不到依赖，届时需要重新构建本包。
+
+## ThinkWatch Lite
+- `thinkwatch-lite-bin`：ThinkWatch Lite 的二进制包。它是 Claude Code、Codex 等客户端的本地网关：客户端只接网关一次，之后换上游、换模型都不用改客户端配置。
+
+### 上游来源与版本跟踪
+- 上游发布：[ThinkWatchProject/ThinkWatch-Lite Releases](https://github.com/ThinkWatchProject/ThinkWatch-Lite/releases)
+- 上游只发 AppImage（x86_64/aarch64）与安装脚本，没有源码包
+- 版本来源：GitHub release tag（`v2026.10.1` → `2026.10.1`），取其中的 x86_64 AppImage 解包后重新打包
+
+### 更新逻辑（来自代码）
+- tag 选择：仅匹配稳定的 `v<version>` tag，跳过 prerelease 与 draft
+- 资产选择：从 release 的资产里挑 `*-x86_64.AppImage`（名字由 release 读出，上游在 2026.10.2 加过 `linux-` 前缀），该资产还没上传完的 release 直接跳过，否则会推出一个下不了源的 PKGBUILD
+- PKGBUILD 更新：替换 `pkgver`，重置 `pkgrel=1`，将 `sha256sums` 设为 `SKIP`，并按 release 里的真实资产名重写 `_asset=`；CI 的 `updpkgsums` 再填真实校验和
+
+### 打包要点
+- 上游 AppImage 里带着构建发行版的 `libwayland-client/egl/server/cursor`。在 Arch（Mesa 26 + wayland 1.26）上，WebKitGTK 让 Mesa 建 EGL display 时会加载到这份旧库，`EGL_BAD_PARAMETER` 直接 abort 掉 web process，窗口白屏。`build()` 删掉这四个库，改用系统版本。
+- 解包安装后 `$APPIMAGE` 为空，应用自认为开发构建、不再自更新，更新由 pacman 负责。
+- `thinkwatch://` 登录回调需要一次性执行 `xdg-mime default app.thinkwatch.lite.desktop x-scheme-handler/thinkwatch`。

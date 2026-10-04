@@ -52,11 +52,14 @@ jobs:
 
       - name: Check for Updates (Python)
         id: check
+        env:
+          # Every package this workflow updates, one AUR repository each
+          AUR_PACKAGES: intel-xpumanager-bin intel-xpu-smi-bin intel-igsc thinkwatch-lite-bin
         run: |
           chown -R builder:builder repo
-          su builder -c "git clone ssh://aur@aur.archlinux.org/intel-xpumanager-bin.git repo/intel-xpumanager-bin"
-          su builder -c "git clone ssh://aur@aur.archlinux.org/intel-xpu-smi-bin.git repo/intel-xpu-smi-bin"
-          su builder -c "git clone ssh://aur@aur.archlinux.org/intel-igsc.git repo/intel-igsc"
+          for package in $AUR_PACKAGES; do
+            su builder -c "git clone ssh://aur@aur.archlinux.org/$package.git repo/$package"
+          done
           cd repo
           python scripts/update.py
 

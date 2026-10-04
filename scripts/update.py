@@ -11,6 +11,9 @@ from urllib.request import Request, urlopen
 
 XPU_RELEASES_API = "https://api.github.com/repos/intel/xpumanager/releases?per_page=20"
 IGSC_RELEASES_API = "https://api.github.com/repos/intel/igsc/releases?per_page=20"
+THINKWATCH_RELEASES_API = (
+    "https://api.github.com/repos/ThinkWatchProject/ThinkWatch-Lite/releases?per_page=20"
+)
 
 # Packages whose PKGBUILD is driven by a .deb asset of an upstream release.
 XPU_ASSET_PATTERNS = {
@@ -25,6 +28,15 @@ XPU_ASSET_PATTERNS = {
 # Package built from the upstream source tarball of a release tag (V1.3.2).
 IGSC_PACKAGE = "intel-igsc"
 IGSC_TAG_PATTERN = re.compile(r"^V(?P<version>\d+(?:\.\d+)+)$")
+
+# thinkwatch-lite-bin is built by unpacking the Linux AppImage of an upstream
+# release. The asset name is read from the release instead of being built here:
+# upstream renamed it once (ThinkWatch-Lite-2026.10.1-x86_64.AppImage in
+# 2026.10.1, ThinkWatch-Lite-2026.10.2-linux-x86_64.AppImage in 2026.10.2) and
+# may rename it again.
+THINKWATCH_PACKAGE = "thinkwatch-lite-bin"
+THINKWATCH_TAG_PATTERN = re.compile(r"^v(?P<version>\d+(?:\.\d+)+)$")
+THINKWATCH_ASSET_PATTERN = re.compile(r"^ThinkWatch-Lite-.+-x86_64\.AppImage$")
 
 
 def fetch_releases(api):
@@ -50,8 +62,8 @@ def parse_xpu_asset(name):
     return None
 
 
-def parse_igsc_tag(tag):
-    match = IGSC_TAG_PATTERN.fullmatch(tag)
+def parse_release_tag(tag, pattern):
+    match = pattern.fullmatch(tag)
     return match.group("version") if match else None
 
 
@@ -76,9 +88,36 @@ def get_igsc_version():
     for release in fetch_releases(IGSC_RELEASES_API):
         if release.get("prerelease") or release.get("draft"):
             continue
-        if version := parse_igsc_tag(release.get("tag_name", "")):
+        if version := parse_release_tag(release.get("tag_name", ""), IGSC_TAG_PATTERN):
             return version
     raise RuntimeError("No stable igsc release tag matching V<version> found")
+
+
+def pick_thinkwatch_asset(release):
+    """The x86_64 AppImage of a release, or None while it is not uploaded."""
+    for asset in release.get("assets", []):
+        if THINKWATCH_ASSET_PATTERN.fullmatch(asset["name"]):
+            return asset["name"]
+    return None
+
+
+def get_thinkwatch_release():
+    """Version and x86_64 AppImage of the newest complete upstream release.
+
+    A release without that AppImage is skipped: the files of a release are
+    uploaded after it is published, and a PKGBUILD pointing at a missing asset
+    cannot be built.
+    """
+    for release in fetch_releases(THINKWATCH_RELEASES_API):
+        if release.get("prerelease") or release.get("draft"):
+            continue
+        version = parse_release_tag(release.get("tag_name", ""), THINKWATCH_TAG_PATTERN)
+        if not version:
+            continue
+        if asset := pick_thinkwatch_asset(release):
+            return version, asset
+        print(f"Skipping {version}: no x86_64 AppImage uploaded yet")
+    raise RuntimeError("No ThinkWatch Lite release with an x86_64 AppImage found")
 
 
 def read_pkgbuild(pkg_path):
@@ -156,6 +195,22 @@ def update_source_pkgbuild(pkg_path, version):
     return True
 
 
+def update_thinkwatch_pkgbuild(pkg_path, version, asset):
+    path, content, current_version, _ = read_pkgbuild(pkg_path)
+    if current_version == version:
+        print(f"[{pkg_path}] Already up to date ({version}).")
+        return False
+
+    print(f"[{pkg_path}] Updating to {version} ({asset})")
+    content = bump_version(content, version)
+    # Written with $pkgver, so the line stays right for the next version
+    # whatever shape the asset name has.
+    name = asset.replace(f"-{version}", "-$pkgver", 1)
+    content = re.sub(r'^_asset=".*"$', f'_asset="{name}"', content, flags=re.MULTILINE)
+    path.write_text(content)
+    return True
+
+
 def write_output(updated_packages):
     if output := os.environ.get("GITHUB_OUTPUT"):
         with open(output, "a") as stream:
@@ -173,6 +228,9 @@ def main():
                 updated.append(package)
         if update_source_pkgbuild(IGSC_PACKAGE, get_igsc_version()):
             updated.append(IGSC_PACKAGE)
+        version, asset = get_thinkwatch_release()
+        if update_thinkwatch_pkgbuild(THINKWATCH_PACKAGE, version, asset):
+            updated.append(THINKWATCH_PACKAGE)
         write_output(updated)
     except Exception as error:
         print(f"Error: {error}", file=sys.stderr)
