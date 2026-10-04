@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from scripts.update import (
+    bump_version,
     parse_igsc_tag,
     parse_xpu_asset,
     update_deb_pkgbuild,
@@ -74,6 +75,16 @@ class UpdateTest(unittest.TestCase):
             self.assertIn("sha256sums=('SKIP')", content)
             self.assertIn('V$pkgver.tar.gz', content)
             self.assertFalse(update_source_pkgbuild(package, "1.3.2"))
+
+    def test_wrapped_checksums_are_replaced_as_a_whole(self):
+        self.assertEqual(
+            bump_version(
+                "pkgver=2026.10.1\npkgrel=3\n"
+                "sha256sums=('aa'\n            'bb')\n",
+                "2026.11.1",
+            ),
+            "pkgver=2026.11.1\npkgrel=1\nsha256sums=('SKIP')\n",
+        )
 
 
 if __name__ == "__main__":

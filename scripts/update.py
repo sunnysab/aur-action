@@ -96,8 +96,12 @@ def bump_version(content, version):
     content = re.sub(r"^pkgver=.+$", f"pkgver={version}", content, flags=re.MULTILINE)
     content = re.sub(r"^pkgrel=.+$", "pkgrel=1", content, flags=re.MULTILINE)
     # The CI runs updpkgsums afterwards, which fills in the real checksums.
+    # The array is replaced whole: it may wrap over several lines.
     return re.sub(
-        r"^sha256sums=.+$", "sha256sums=('SKIP')", content, flags=re.MULTILINE
+        r"^sha256sums=\([^)]*\)",
+        "sha256sums=('SKIP')",
+        content,
+        flags=re.MULTILINE | re.DOTALL,
     )
 
 
