@@ -52,6 +52,6 @@ Arch 官方 `extra/igsc` 停留在上游 0.9.5，只提供 `libigsc.so.0`，且�
 - PKGBUILD 更新：替换 `pkgver`，重置 `pkgrel=1`，将 `sha256sums` 设为 `SKIP`，并按 release 里的真实资产名重写 `_asset=`；CI 的 `updpkgsums` 再填真实校验和
 
 ### 打包要点
-- 上游 AppImage 里带着构建发行版的 `libwayland-client/egl/server/cursor`。在 Arch（Mesa 26 + wayland 1.26）上，WebKitGTK 让 Mesa 建 EGL display 时会加载到这份旧库，`EGL_BAD_PARAMETER` 直接 abort 掉 web process，窗口白屏。`build()` 删掉这四个库，改用系统版本。
+- 上游 AppImage 过去带着构建发行版的 `libwayland-client/egl/server/cursor`。在 Arch（Mesa 26 + wayland 1.26）上，WebKitGTK 让 Mesa 建 EGL display 时会加载到这份旧库，`EGL_BAD_PARAMETER` 直接 abort 掉 web process，窗口白屏。2026.10.9 的上游 AppImage 已不再附带这几个库，`build()` 里的删除保留作为回归防线。
 - 解包安装后 `$APPIMAGE` 为空，应用自认为开发构建、不再自更新，更新由 pacman 负责。
 - `thinkwatch://` 登录回调需要一次性执行 `xdg-mime default app.thinkwatch.lite.desktop x-scheme-handler/thinkwatch`。
