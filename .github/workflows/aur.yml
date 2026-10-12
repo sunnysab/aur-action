@@ -1,6 +1,8 @@
 name: Update AUR Packages
 
 on:
+  schedule:
+    - cron: '0 3 * * *'  # 每天 UTC 03:00
   workflow_dispatch:    # 允许手动触发
 
 jobs:
