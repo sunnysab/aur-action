@@ -18,14 +18,14 @@
 - 资产选择：匹配 `xpu-smi_<version>-<build>.24.04_amd64.deb`
 - PKGBUILD 更新：替换 `pkgver`、`_buildver`，重置 `pkgrel=1`，并将 `sha256sums` 设为 `SKIP`
 - XPU Manager 2.x 不再发布 daemon 包，因此 `intel-xpumanager-bin` 跟踪最后一个 daemon 版本 1.3.7；2.x 仅自动更新 `intel-xpu-smi-bin`。
-- XPU-SMI 2.x 需要 `libigsc.so.1`，由本仓库维护的 `intel-igsc` 提供（Arch 官方 `igsc` 只有 `libigsc.so.0`）。
+- XPU-SMI 2.0–2.2 需要 `libigsc.so.1`，由本仓库维护的 `intel-igsc` 提供（Arch 官方 `igsc` 只有 `libigsc.so.0`）；2.3.0 起上游已把 igsc 与 metee 静态编入二进制，不再有任何动态依赖，`package()` 里的路径搬移与 patchelf 改写也随之删除。
 
-> XPU-SMI 2.x 还直接链接 `libmetee`，而上游的 Ubuntu 构建针对的是 Ubuntu 自带的 SONAME（如 `libmetee.so.6.2.5.0`）。PKGBUILD 在 `package()` 中用 patchelf 改写为构建机上实际的 SONAME，因此 `intel-metee` 升级后需要重新构建本包。
+> 2.0–2.2 直接链接 `libmetee`，而上游的 Ubuntu 构建针对的是 Ubuntu 自带的 SONAME（如 `libmetee.so.6.2.5.0`），因此当时需要在 `package()` 中用 patchelf 改写为构建机上实际的 SONAME。
 
 ## Intel-IGSC
 - `intel-igsc`：Intel Graphics System Controller 固件更新库，提供 `igsc` CLI 与 `libigsc.so.1`。
 
-Arch 官方 `extra/igsc` 停留在上游 0.9.5，只提供 `libigsc.so.0`，且自 2025-09 起被标记为过期（此后提交均为跟随 `intel-metee` 的 rebuild），无法满足 XPU-SMI 2.x 的依赖，因此另建此包跟踪上游源码发布。
+Arch 官方 `extra/igsc` 停留在上游 0.9.5，只提供 `libigsc.so.0`，且自 2025-09 起被标记为过期（此后提交均为跟随 `intel-metee` 的 rebuild），无法满足 XPU-SMI 2.0–2.2 的依赖，因此另建此包跟踪上游源码发布。
 
 ### 上游来源与版本跟踪
 - 上游发布：[intel/igsc Releases](https://github.com/intel/igsc/releases)

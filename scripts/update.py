@@ -155,31 +155,6 @@ def update_deb_pkgbuild(pkg_path, version, build):
     content = re.sub(
         r"^_buildver=.+$", f"_buildver={build}", content, flags=re.MULTILINE
     )
-    if Path(pkg_path).name == "intel-xpu-smi-bin":
-        content = re.sub(
-            r"xpu-smi_\$\{pkgver\}[_-]\$\{_buildver\}_amd64\.deb",
-            "xpu-smi_${pkgver}-${_buildver}_amd64.deb",
-            content,
-        )
-        content = content.replace("data.tar.gz", "data.tar.zst")
-        content = re.sub(
-            r"^provides=.+$", "provides=('intel-xpu-smi')", content, flags=re.MULTILINE
-        )
-        # 2.x links against libigsc.so.1, which only igsc >= 1.3.1 provides,
-        # and against libmetee directly (relinked in package()).
-        content = re.sub(
-            r"^depends=\(.*?^\)",
-            "depends=(\n"
-            "    'intel-compute-runtime'\n"
-            "    'level-zero-loader'\n"
-            "    'igsc>=1.3.1'\n"
-            "    'intel-metee'\n"
-            "    'hwloc'\n"
-            "    'libpciaccess'\n"
-            ")",
-            content,
-            flags=re.MULTILINE | re.DOTALL,
-        )
     path.write_text(content)
     return True
 

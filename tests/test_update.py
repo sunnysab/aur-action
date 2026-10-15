@@ -16,7 +16,7 @@ from scripts.update import (
 
 
 class UpdateTest(unittest.TestCase):
-    def test_v2_asset_and_pkgbuild_migration(self):
+    def test_xpu_asset_parsing(self):
         self.assertEqual(
             parse_xpu_asset("xpu-smi_2.0.1-1.24.04_amd64.deb"),
             ("intel-xpu-smi-bin", "2.0.1", "1.24.04"),
@@ -31,28 +31,39 @@ class UpdateTest(unittest.TestCase):
                 "20260530.031049.9fc2535d.u24.04",
             ),
         )
+
+    def test_xpu_smi_bump_leaves_the_recipe_alone(self):
+        # The PKGBUILD is already on 2.x, where the deb ships no libraries:
+        # a bump only rewrites the version fields and the checksums, and must
+        # never touch depends/source/package().
         with tempfile.TemporaryDirectory() as directory:
             package = Path(directory) / "intel-xpu-smi-bin"
             package.mkdir()
             pkgbuild = package / "PKGBUILD"
+            depends = (
+                "depends=(\n    'intel-compute-runtime'\n    'level-zero-loader'\n"
+                "    'hwloc'\n    'libpciaccess'\n    'systemd-libs'\n)\n"
+            )
             pkgbuild.write_text(
-                "pkgver=1.3.7\npkgrel=1\n_buildver=old.u24.04\n"
-                "depends=(\n    'igsc'\n)\n"
-                "provides=('intel-xpu-smi' 'libxpum.so')\n"
-                'source=("xpu-smi_${pkgver}_${_buildver}_amd64.deb")\n'
+                "pkgver=2.3.0\npkgrel=2\n_buildver=1.24.04\n"
+                "provides=('intel-xpu-smi')\n"
+                + depends
+                + 'source=("xpu-smi_${pkgver}-${_buildver}_amd64.deb")\n'
                 "sha256sums=('old')\n"
-                'bsdtar -O -xf "$source" data.tar.gz\n'
             )
 
-            self.assertTrue(update_deb_pkgbuild(package, "2.0.1", "1.24.04"))
+            self.assertTrue(update_deb_pkgbuild(package, "2.4.0", "1.24.04"))
             content = pkgbuild.read_text()
-            self.assertIn("xpu-smi_${pkgver}-${_buildver}_amd64.deb", content)
-            self.assertIn("data.tar.zst", content)
-            self.assertIn("provides=('intel-xpu-smi')", content)
-            self.assertIn("'igsc>=1.3.1'", content)
-            self.assertIn("'intel-metee'", content)
-            self.assertIn("'hwloc'", content)
-            self.assertFalse(update_deb_pkgbuild(package, "2.0.1", "1.24.04"))
+            self.assertIn("pkgver=2.4.0", content)
+            self.assertIn("pkgrel=1", content)
+            self.assertIn("sha256sums=('SKIP')", content)
+            self.assertIn("_buildver=1.24.04", content)
+            self.assertIn(depends, content)
+            self.assertIn(
+                'source=("xpu-smi_${pkgver}-${_buildver}_amd64.deb")', content
+            )
+            self.assertNotIn("intel-metee", content)
+            self.assertFalse(update_deb_pkgbuild(package, "2.4.0", "1.24.04"))
 
     def test_igsc_release_tag(self):
         self.assertEqual(parse_release_tag("V1.3.2", IGSC_TAG_PATTERN), "1.3.2")
