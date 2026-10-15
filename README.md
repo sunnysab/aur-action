@@ -55,3 +55,10 @@ Arch 官方 `extra/igsc` 停留在上游 0.9.5，只提供 `libigsc.so.0`，且�
 - 上游 AppImage 过去带着构建发行版的 `libwayland-client/egl/server/cursor`。在 Arch（Mesa 26 + wayland 1.26）上，WebKitGTK 让 Mesa 建 EGL display 时会加载到这份旧库，`EGL_BAD_PARAMETER` 直接 abort 掉 web process，窗口白屏。2026.10.9 的上游 AppImage 已不再附带这几个库，`build()` 里的删除保留作为回归防线。
 - 解包安装后 `$APPIMAGE` 为空，应用自认为开发构建、不再自更新，更新由 pacman 负责。
 - `thinkwatch://` 登录回调需要一次性执行 `xdg-mime default app.thinkwatch.lite.desktop x-scheme-handler/thinkwatch`。
+
+## CI
+
+`.github/workflows/aur.yml` 每天检查上游并在有更新时提交到 AUR。推送前会对每个待更新的包跑一次 `makepkg -f -d --nocheck -c` 冒烟构建：
+
+- 没有这一步时，`package()` 里的错误只会在用户执行 `makepkg` 时才暴露（例如 `intel-xpu-smi-bin` 曾把 `patchelf --print-needed | grep '^libmetee\.so\.'` 留在 `package()` 中，2.3.0 静态链接 metee 后该 `grep` 空匹配返回 1，被 `set -e` 直接中断，包根本无法构建）。
+- `-d` 只跳过依赖校验：冒烟构建验证的是 PKGBUILD 自身能否走完 `build()`/`package()`，而容器里没有这些包的运行时依赖。相应地，容器必须预装各包的 `makedepends`（当前为 `cmake` 与 `intel-metee`，供 `intel-igsc` 从源码构建使用）。

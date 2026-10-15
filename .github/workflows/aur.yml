@@ -17,7 +17,9 @@ jobs:
           # 1. 初始化 Pacman 密钥环并更新系统
           pacman-key --init
           pacman-key --populate archlinux
-          pacman -Sy --noconfirm git python openssh pacman-contrib sudo
+          # cmake 与 intel-metee 只在冒烟构建 intel-igsc 时需要：
+          # 它用 cmake/Findmetee.cmake 找系统的 libmetee
+          pacman -Sy --noconfirm git python openssh pacman-contrib sudo cmake intel-metee
 
           # 2. 创建构建用户 'builder' (makepkg 禁止以 root 运行)
           useradd -m builder
@@ -87,8 +89,16 @@ jobs:
             su builder -c "updpkgsums"
             # 生成 AUR 必需的 .SRCINFO
             su builder -c "makepkg --printsrcinfo > .SRCINFO"
-            
-            # --- 2. 提交到 AUR ---
+
+            # --- 2. 冒烟构建 ---
+            # 不构建就推送的话，package() 里的错误（例如改写过时的
+            # patchelf|grep 在空匹配下返回 1）会直到用户 makepkg 时才暴露。
+            # -d 跳过依赖检查：容器里没有这些运行时依赖，而本步只验证
+            # PKGBUILD 自身能否走完 build()/package()。
+            echo "Smoke-building $PKG_NAME..."
+            su builder -c "makepkg -f -d --nocheck -c"
+
+            # --- 3. 提交到 AUR ---
             # 添加文件
             su builder -c "git add PKGBUILD .SRCINFO"
             
