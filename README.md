@@ -74,6 +74,7 @@ Arch 官方 `extra/igsc` 停留在上游 0.9.5，只提供 `libigsc.so.0`，且�
 - 上游 unit 的 `ExecStart=/usr/local/bin/twcore` 是 install.sh 的安装路径，包里改写为 `/usr/bin/twcore`；`StateDirectory=/var/lib/thinkwatch` 保持不变，`EnvironmentFile=-/etc/thinkwatch/env` 由管理员按需自建
 - unit 以 `thinkwatch` 用户运行，本包用 `sysusers.d` 建这个账号（上游只有 install.sh 会建）；包本身不启用服务，首次配置见上游 `docs/server.md`
 - 装完后更新交给 pacman：`twcore upgrade` 会自己从 GitHub 替换正在运行的二进制，那是绕开包管理器的另一条路径
+- 让另一台机器上的 Lite 用网关（`:8788`）时，`listen.gateway.allow_from` 默认只有 `10/172.16/192.168` 与 `fc00::/7`，tailnet 的 `100.64.0.0/10` 不在里面——不在白名单里的来源连网关会拿到 401，Lite 会报“从 …/v1/models 读取模型列表失败”；控制口的 `remote.allow_from` 是另一份，要分别加
 - 改配置要用服务用户跑：`sudo -u thinkwatch env THINKWATCH_HOME=/var/lib/thinkwatch twcore …`。直接用 `sudo twcore … --config /var/lib/thinkwatch/config.yaml` 会把 `config.yaml` 重写成 `root:root 600`，之后服务（用户 `thinkwatch`）读不到、配置不生效、重启还会崩在 `Permission denied`
 
 ## CI
