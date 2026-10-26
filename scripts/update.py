@@ -14,6 +14,9 @@ IGSC_RELEASES_API = "https://api.github.com/repos/intel/igsc/releases?per_page=2
 THINKWATCH_RELEASES_API = (
     "https://api.github.com/repos/ThinkWatchProject/ThinkWatch-Lite/releases?per_page=20"
 )
+THINKWATCH_CORE_RELEASES_API = (
+    "https://api.github.com/repos/ThinkWatchProject/ThinkWatch-Core/releases?per_page=20"
+)
 
 # Packages whose PKGBUILD is driven by a .deb asset of an upstream release.
 XPU_ASSET_PATTERNS = {
@@ -37,6 +40,12 @@ IGSC_TAG_PATTERN = re.compile(r"^V(?P<version>\d+(?:\.\d+)+)$")
 THINKWATCH_PACKAGE = "thinkwatch-lite-bin"
 THINKWATCH_TAG_PATTERN = re.compile(r"^v(?P<version>\d+(?:\.\d+)+)$")
 THINKWATCH_ASSET_PATTERN = re.compile(r"^ThinkWatch-Lite-.+-x86_64\.AppImage$")
+
+# thinkwatch-core-bin unpacks the x86_64 tarball of that release: the server
+# binary, the systemd unit and the license. Unlike the Lite asset, this name
+# carries no version, so the PKGBUILD's source line needs no rewriting.
+THINKWATCH_CORE_PACKAGE = "thinkwatch-core-bin"
+THINKWATCH_CORE_ASSET = "twcore-x86_64-unknown-linux-gnu.tar.gz"
 
 
 def fetch_releases(api):
@@ -118,6 +127,27 @@ def get_thinkwatch_release():
             return version, asset
         print(f"Skipping {version}: no x86_64 AppImage uploaded yet")
     raise RuntimeError("No ThinkWatch Lite release with an x86_64 AppImage found")
+
+
+def get_thinkwatch_core_version():
+    """Version of the newest release that already carries the x86_64 tarball.
+
+    Skipping an incomplete release is the same reason as for Lite: its PKGBUILD
+    would point at a file that cannot be downloaded yet.
+    """
+    for release in fetch_releases(THINKWATCH_CORE_RELEASES_API):
+        if release.get("prerelease") or release.get("draft"):
+            continue
+        if not (
+            version := parse_release_tag(
+                release.get("tag_name", ""), THINKWATCH_TAG_PATTERN
+            )
+        ):
+            continue
+        if any(asset["name"] == THINKWATCH_CORE_ASSET for asset in release["assets"]):
+            return version
+        print(f"Skipping {version}: no x86_64 tarball uploaded yet")
+    raise RuntimeError("No ThinkWatch Core release with an x86_64 tarball found")
 
 
 def read_pkgbuild(pkg_path):
@@ -206,6 +236,10 @@ def main():
         version, asset = get_thinkwatch_release()
         if update_thinkwatch_pkgbuild(THINKWATCH_PACKAGE, version, asset):
             updated.append(THINKWATCH_PACKAGE)
+        if update_source_pkgbuild(
+            THINKWATCH_CORE_PACKAGE, get_thinkwatch_core_version()
+        ):
+            updated.append(THINKWATCH_CORE_PACKAGE)
         write_output(updated)
     except Exception as error:
         print(f"Error: {error}", file=sys.stderr)

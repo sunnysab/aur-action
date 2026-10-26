@@ -56,6 +56,25 @@ Arch 官方 `extra/igsc` 停留在上游 0.9.5，只提供 `libigsc.so.0`，且�
 - 解包安装后 `$APPIMAGE` 为空，应用自认为开发构建、不再自更新，更新由 pacman 负责。
 - `thinkwatch://` 登录回调需要一次性执行 `xdg-mime default app.thinkwatch.lite.desktop x-scheme-handler/thinkwatch`。
 
+## ThinkWatch Core
+- `thinkwatch-core-bin`：ThinkWatch Core 的二进制包，即 `twcore` 的服务端版本。它是 ThinkWatch Lite 内置的那套网关引擎，单独跑在 Linux 服务器上，接受 Lite 或其他客户端的远程连接。
+
+### 上游来源与版本跟踪
+- 上游发布：[ThinkWatchProject/ThinkWatch-Core Releases](https://github.com/ThinkWatchProject/ThinkWatch-Core/releases)
+- 资产：`twcore-x86_64-unknown-linux-gnu.tar.gz`（另有 aarch64 与裸二进制），里面是 `twcore`、`twcore.service` 与 `LICENSE`
+- 版本来源：GitHub release tag（`v0.83.2` → `0.83.2`）
+
+### 更新逻辑（来自代码）
+- tag 选择：仅匹配稳定的 `v<version>` tag，跳过 prerelease 与 draft；release 里还没传 x86_64 tar.gz 的整条跳过
+- PKGBUILD 更新：替换 `pkgver`，重置 `pkgrel=1`，`sha256sums` 设为 `SKIP`，其余不动；CI 的 `updpkgsums` 再填真实校验和
+- 资产名不带版本，所以 `source=` 写成 `"$pkgver-$_tarball::…"`：同一个构建目录里前后两个版本不会落到同一个文件名上，否则第二次构建会撞上旧文件的校验和
+
+### 打包要点
+- 运行时依赖只有 `glibc` 与 `gcc-libs`；上游要求 glibc 2.35+（Ubuntu 22.04 / Debian 12 及以上）
+- 上游 unit 的 `ExecStart=/usr/local/bin/twcore` 是 install.sh 的安装路径，包里改写为 `/usr/bin/twcore`；`StateDirectory=/var/lib/thinkwatch` 保持不变，`EnvironmentFile=-/etc/thinkwatch/env` 由管理员按需自建
+- unit 以 `thinkwatch` 用户运行，本包用 `sysusers.d` 建这个账号（上游只有 install.sh 会建）；包本身不启用服务，首次配置见上游 `docs/server.md`
+- 装完后更新交给 pacman：`twcore upgrade` 会自己从 GitHub 替换正在运行的二进制，那是绕开包管理器的另一条路径
+
 ## CI
 
 `.github/workflows/aur.yml` 每天检查上游并在有更新时提交到 AUR。推送前会对每个待更新的包跑一次 `makepkg -f -d --nocheck -c` 冒烟构建：

@@ -168,6 +168,36 @@ class UpdateTest(unittest.TestCase):
                 )
             )
 
+    def test_thinkwatch_core_bump_leaves_build_recipe(self):
+        # The tarball name is fixed upstream, so a bump only touches the version
+        # fields and the checksums; the source line keeps its $pkgver prefix.
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "thinkwatch-core-bin"
+            package.mkdir()
+            pkgbuild = package / "PKGBUILD"
+            pkgbuild.write_text(
+                "pkgver=0.83.2\n"
+                "pkgrel=2\n"
+                '_tarball="twcore-x86_64-unknown-linux-gnu.tar.gz"\n'
+                'source=("$pkgver-$_tarball::https://example.invalid/v$pkgver/$_tarball")\n'
+                "sha256sums=('aa'\n            'bb')\n"
+                "package() {\n"
+                '  install -Dm755 twcore "$pkgdir/usr/bin/twcore"\n'
+                "}\n"
+            )
+
+            self.assertTrue(update_source_pkgbuild(package, "0.84.0"))
+            content = pkgbuild.read_text()
+            self.assertIn("pkgver=0.84.0", content)
+            self.assertIn("pkgrel=1", content)
+            self.assertIn("sha256sums=('SKIP')", content)
+            self.assertIn(
+                'source=("$pkgver-$_tarball::https://example.invalid/v$pkgver/$_tarball")',
+                content,
+            )
+            self.assertIn('install -Dm755 twcore', content)
+            self.assertFalse(update_source_pkgbuild(package, "0.84.0"))
+
     def test_wrapped_checksums_are_replaced_as_a_whole(self):
         self.assertEqual(
             bump_version(

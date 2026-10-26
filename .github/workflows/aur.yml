@@ -58,7 +58,7 @@ jobs:
         id: check
         env:
           # Every package this workflow updates, one AUR repository each
-          AUR_PACKAGES: intel-xpumanager-bin intel-xpu-smi-bin intel-igsc thinkwatch-lite-bin
+          AUR_PACKAGES: intel-xpumanager-bin intel-xpu-smi-bin intel-igsc thinkwatch-lite-bin thinkwatch-core-bin
         run: |
           chown -R builder:builder repo
           for package in $AUR_PACKAGES; do
